@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tic Tac Toe - Deep Q-Learning Web App</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>Tic Tac Toe</h1>
+            <p class="subtitle">Deep Q-Learning AI</p>
+        </header>
+
+        <!-- Main Game Section -->
+        <main class="game-container">
+            <!-- Game Info Section -->
+            <section class="game-info">
+                <!-- Player Indicators -->
+                <div class="player-section">
+                    <div class="player-indicator human-player">
+                        <span class="player-label">Human (You)</span>
+                        <span class="player-symbol">X</span>
+                    </div>
+                    <div class="vs-indicator">VS</div>
+                    <div class="player-indicator ai-player">
+                        <span class="player-label">AI</span>
+                        <span class="player-symbol">O</span>
+                    </div>
+                </div>
+
+                <!-- Current Turn Indicator -->
+                <div class="turn-indicator">
+                    <span class="current-turn-label">Current Turn:</span>
+                    <span class="current-turn-value" id="currentTurn">Human</span>
+                </div>
+            </section>
+
+            <!-- Game Board Section -->
+            <section class="board-section">
+                <div class="game-board" id="gameBoard">
+                    <div class="cell" data-index="0"></div>
+                    <div class="cell" data-index="1"></div>
+                    <div class="cell" data-index="2"></div>
+                    <div class="cell" data-index="3"></div>
+                    <div class="cell" data-index="4"></div>
+                    <div class="cell" data-index="5"></div>
+                    <div class="cell" data-index="6"></div>
+                    <div class="cell" data-index="7"></div>
+                    <div class="cell" data-index="8"></div>
+                </div>
+            </section>
+
+            <!-- Message Box -->
+            <section class="message-section">
+                <div class="message-box" id="messageBox">
+                    <p id="gameMessage">Game started! Make your move.</p>
+                </div>
+            </section>
+
+            <!-- Score Tracking Section -->
+            <section class="score-section">
+                <div class="score-card human-score">
+                    <h3>Your Wins</h3>
+                    <div class="score-value" id="humanScore">0</div>
+                </div>
+                <div class="score-card draws-score">
+                    <h3>Draws</h3>
+                    <div class="score-value" id="drawScore">0</div>
+                </div>
+                <div class="score-card ai-score">
+                    <h3>AI Wins</h3>
+                    <div class="score-value" id="aiScore">0</div>
+                </div>
+            </section>
+
+            <!-- Game Controls -->
+            <section class="controls-section">
+                <button class="btn btn-primary" id="newGameBtn">New Game</button>
+                <button class="btn btn-secondary" id="resetScoreBtn">Reset Scores</button>
+            </section>
+        </main>
+
+        <!-- Winner Modal -->
+        <div class="modal" id="winnerModal">
+            <div class="modal-content">
+                <button class="modal-close" id="modalCloseBtn">&times;</button>
+                <div class="modal-body">
+                    <h2 id="winnerTitle">Game Over!</h2>
+                    <p id="winnerMessage" class="winner-message">
+                        Congratulations! You won!
+                    </p>
+                    <div class="modal-actions">
+                        <button class="btn btn-primary" id="playAgainBtn">Play Again</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal Overlay -->
+        <div class="modal-overlay" id="modalOverlay"></div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="script.js"></script>
+</body>
+</html>
