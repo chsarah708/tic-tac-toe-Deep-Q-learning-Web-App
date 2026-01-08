@@ -1,950 +1,309 @@
-// ============================================================================
-// Tic-Tac-Toe Deep Q-Learning Web App - Main Script
-// Game State Management, API Calls, Game Logic, UI Updates, and More
-// ============================================================================
+// ==========================================
+// GAME STATE
+// ==========================================
 
-// ============================================================================
-// GAME STATE MANAGEMENT
-// ============================================================================
+let gameState = {
+    board: Array(9).fill(0),
+    gameOver: false,
+    playerWins: 0,
+    aiWins: 0,
+    draws: 0
+};
 
-const GameState = {
-  board: Array(9).fill(null),
-  currentPlayer: 'X',
-  gameActive: true,
-  gameMode: 'ai', // 'ai' or 'pvp'
-  moves: [],
-  gameStartTime: null,
-  aiDifficulty: 'hard', // 'easy', 'medium', 'hard'
-  
-  // Initialize game
-  reset() {
-    this.board = Array(9).fill(null);
-    this.currentPlayer = 'X';
-    this.gameActive = true;
-    this.moves = [];
-    this.gameStartTime = Date.now();
-  },
-  
-  // Make a move
-  makeMove(index) {
-    if (!this.gameActive || this.board[index] !== null) {
-      return false;
+// ==========================================
+// API CALLS
+// ==========================================
+
+async function apiCall(endpoint, data = null) {
+    try {
+        const options = {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        };
+        
+        if (data) {
+            options.body = JSON.stringify(data);
+        }
+        
+        const response = await fetch(`/api/${endpoint}`, options);
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'API request failed');
+        }
+        
+        return await response.json();
+    } catch (error) {
+        console.error('API Error:', error);
+        showMessage('❌ Error: ' + error.message, 'error');
+        return null;
     }
-    this.board[index] = this.currentPlayer;
-    this.moves.push({ index, player: this.currentPlayer, timestamp: Date.now() });
-    return true;
-  },
-  
-  // Switch player
-  switchPlayer() {
-    this.currentPlayer = this.currentPlayer === 'X' ? 'O' : 'X';
-  },
-  
-  // Get board copy
-  getBoardCopy() {
-    return [...this.board];
-  },
-  
-  // Check winner
-  getWinner() {
-    const lines = [
-      [0, 1, 2],
-      [3, 4, 5],
-      [6, 7, 8],
-      [0, 3, 6],
-      [1, 4, 7],
-      [2, 5, 8],
-      [0, 4, 8],
-      [2, 4, 6]
+}
+
+// ==========================================
+// GAME FUNCTIONS
+// ==========================================
+
+async function startNewGame(aiStarts = false) {
+    // Disable buttons during request
+    disableButtons(true);
+    
+    const result = await apiCall('new_game', { ai_starts: aiStarts });
+    
+    if (result) {
+        gameState.board = result.board;
+        gameState.gameOver = result.game_over;
+        updateBoard();
+        showMessage(result.message);
+    }
+    
+    disableButtons(false);
+}
+
+async function makePlayerMove(position) {
+    if (gameState.gameOver) {
+        showMessage('Game over! Start a new game.', 'warning');
+        return;
+    }
+    
+    if (gameState.board[position] !== 0) {
+        showMessage('Position already taken!', 'warning');
+        return;
+    }
+    
+    // Disable board during AI thinking
+    disableBoard(true);
+    
+    const result = await apiCall('player_move', { position: position });
+    
+    if (result) {
+        gameState.board = result.board;
+        gameState.gameOver = result.game_over;
+        
+        updateBoard();
+        showMessage(result.message);
+        
+        if (result.game_over) {
+            handleGameOver(result);
+        }
+    }
+    
+    disableBoard(false);
+}
+
+function handleGameOver(result) {
+    if (result.winner === -1) {
+        // Player won
+        gameState.playerWins++;
+        updateScore();
+        setTimeout(() => showWinnerModal('🎉', 'You Won!', 'Congratulations! You beat the AI!'), 500);
+    } else if (result.winner === 1) {
+        // AI won
+        gameState.aiWins++;
+        updateScore();
+        setTimeout(() => showWinnerModal('🤖', 'AI Won!', 'The AI outsmarted you this time!'), 500);
+    } else if (result.is_draw) {
+        // Draw
+        gameState.draws++;
+        updateScore();
+        setTimeout(() => showWinnerModal('🤝', "It's a Draw!", 'Well played! Nobody won this round.'), 500);
+    }
+    
+    highlightWinningCells();
+}
+
+// ==========================================
+// UI UPDATE FUNCTIONS
+// ==========================================
+
+function updateBoard() {
+    const cells = document.querySelectorAll('.cell');
+    
+    cells.forEach((cell, index) => {
+        const value = gameState.board[index];
+        
+        // Clear previous content and classes
+        cell.textContent = '';
+        cell.classList.remove('player-move', 'ai-move', 'taken', 'winning-cell');
+        
+        if (value === -1) {
+            cell.textContent = 'O';
+            cell.classList.add('player-move', 'taken');
+        } else if (value === 1) {
+            cell.textContent = 'X';
+            cell.classList.add('ai-move', 'taken');
+        }
+    });
+}
+
+function showMessage(text, type = 'info') {
+    const messageBox = document.getElementById('message');
+    const messageText = document.getElementById('message-text');
+    
+    messageText.textContent = text;
+    
+    // Reset animation
+    messageBox.style.animation = 'none';
+    setTimeout(() => {
+        messageBox.style.animation = '';
+    }, 10);
+}
+
+function updateScore() {
+    document.getElementById('player-wins').textContent = gameState.playerWins;
+    document.getElementById('ai-wins').textContent = gameState.aiWins;
+    document.getElementById('draws').textContent = gameState.draws;
+}
+
+function disableButtons(disabled) {
+    document.getElementById('new-game-btn').disabled = disabled;
+    document.getElementById('ai-start-btn').disabled = disabled;
+}
+
+function disableBoard(disabled) {
+    const cells = document.querySelectorAll('.cell');
+    cells.forEach(cell => {
+        if (disabled) {
+            cell.style.pointerEvents = 'none';
+            cell.style.opacity = '0.7';
+        } else {
+            cell.style.pointerEvents = '';
+            cell.style.opacity = '';
+        }
+    });
+}
+
+function highlightWinningCells() {
+    const board = gameState.board;
+    const winPatterns = [
+        [0, 1, 2], [3, 4, 5], [6, 7, 8], // Rows
+        [0, 3, 6], [1, 4, 7], [2, 5, 8], // Columns
+        [0, 4, 8], [2, 4, 6]             // Diagonals
     ];
     
-    for (let line of lines) {
-      const [a, b, c] = line;
-      if (this.board[a] && this.board[a] === this.board[b] && this.board[a] === this.board[c]) {
-        return { winner: this.board[a], line };
-      }
+    for (const pattern of winPatterns) {
+        const [a, b, c] = pattern;
+        if (board[a] !== 0 && board[a] === board[b] && board[a] === board[c]) {
+            const cells = document.querySelectorAll('.cell');
+            cells[a].classList.add('winning-cell');
+            cells[b].classList.add('winning-cell');
+            cells[c].classList.add('winning-cell');
+            break;
+        }
     }
-    return null;
-  },
-  
-  // Check if board is full
-  isFull() {
-    return this.board.every(cell => cell !== null);
-  },
-  
-  // Get available moves
-  getAvailableMoves() {
-    return this.board
-      .map((cell, index) => cell === null ? index : null)
-      .filter(index => index !== null);
-  }
-};
+}
 
-// ============================================================================
-// SCORE AND STATISTICS MANAGEMENT
-// ============================================================================
+// ==========================================
+// MODAL FUNCTIONS
+// ==========================================
 
-const ScoreManager = {
-  storageKey: 'ticTacToeScores',
-  
-  // Get all scores
-  getScores() {
-    const scores = localStorage.getItem(this.storageKey);
-    return scores ? JSON.parse(scores) : this.getDefaultScores();
-  },
-  
-  // Get default scores
-  getDefaultScores() {
-    return {
-      totalGames: 0,
-      playerWins: 0,
-      aiWins: 0,
-      draws: 0,
-      pvpGames: 0,
-      streak: 0,
-      bestStreak: 0,
-      lastGameResult: null,
-      lastGameDate: null,
-      gamesPlayedToday: 0
-    };
-  },
-  
-  // Save scores
-  saveScores(scores) {
-    localStorage.setItem(this.storageKey, JSON.stringify(scores));
-  },
-  
-  // Add win for player
-  addPlayerWin() {
-    const scores = this.getScores();
-    scores.totalGames++;
-    scores.playerWins++;
-    scores.streak++;
-    scores.bestStreak = Math.max(scores.streak, scores.bestStreak);
-    scores.lastGameResult = 'win';
-    scores.lastGameDate = new Date().toISOString();
-    scores.gamesPlayedToday = this.getGamesPlayedToday() + 1;
-    this.saveScores(scores);
-    return scores;
-  },
-  
-  // Add win for AI
-  addAIWin() {
-    const scores = this.getScores();
-    scores.totalGames++;
-    scores.aiWins++;
-    scores.streak = 0;
-    scores.lastGameResult = 'loss';
-    scores.lastGameDate = new Date().toISOString();
-    scores.gamesPlayedToday = this.getGamesPlayedToday() + 1;
-    this.saveScores(scores);
-    return scores;
-  },
-  
-  // Add draw
-  addDraw() {
-    const scores = this.getScores();
-    scores.totalGames++;
-    scores.draws++;
-    scores.lastGameResult = 'draw';
-    scores.lastGameDate = new Date().toISOString();
-    scores.gamesPlayedToday = this.getGamesPlayedToday() + 1;
-    this.saveScores(scores);
-    return scores;
-  },
-  
-  // Get win rate
-  getWinRate() {
-    const scores = this.getScores();
-    if (scores.totalGames === 0) return 0;
-    return ((scores.playerWins / scores.totalGames) * 100).toFixed(2);
-  },
-  
-  // Get games played today
-  getGamesPlayedToday() {
-    const scores = this.getScores();
-    if (!scores.lastGameDate) return 0;
-    const lastGameDate = new Date(scores.lastGameDate);
-    const today = new Date();
-    if (lastGameDate.toDateString() === today.toDateString()) {
-      return scores.gamesPlayedToday;
-    }
-    return 0;
-  },
-  
-  // Reset all scores
-  resetScores() {
-    localStorage.removeItem(this.storageKey);
-  }
-};
+function showWinnerModal(icon, title, message) {
+    const modal = document.getElementById('winner-modal');
+    const modalIcon = document.getElementById('modal-icon');
+    const modalTitle = document.getElementById('modal-title');
+    const modalMessage = document.getElementById('modal-message');
+    
+    modalIcon.textContent = icon;
+    modalTitle.textContent = title;
+    modalMessage.textContent = message;
+    
+    modal.classList.add('show');
+}
 
-// ============================================================================
-// API CALLS
-// ============================================================================
+function closeModal() {
+    const modal = document.getElementById('winner-modal');
+    modal.classList.remove('show');
+    startNewGame(false);
+}
 
-const APIClient = {
-  baseURL: '/api',
-  
-  // Get AI move
-  async getAIMove(board, difficulty = 'hard') {
-    try {
-      const response = await fetch(`${this.baseURL}/ai-move`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ board, difficulty })
-      });
-      
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      const data = await response.json();
-      return data.move;
-    } catch (error) {
-      console.error('Error getting AI move:', error);
-      return this.getRandomMove(board);
-    }
-  },
-  
-  // Get random move (fallback)
-  getRandomMove(board) {
-    const availableMoves = GameState.getAvailableMoves();
-    if (availableMoves.length === 0) return -1;
-    return availableMoves[Math.floor(Math.random() * availableMoves.length)];
-  },
-  
-  // Train AI with game data
-  async trainAI(gameData) {
-    try {
-      const response = await fetch(`${this.baseURL}/train`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(gameData)
-      });
-      
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      return await response.json();
-    } catch (error) {
-      console.error('Error training AI:', error);
-      return null;
-    }
-  },
-  
-  // Get game statistics
-  async getGameStats() {
-    try {
-      const response = await fetch(`${this.baseURL}/stats`);
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching game stats:', error);
-      return null;
-    }
-  },
-  
-  // Reset AI model
-  async resetAI() {
-    try {
-      const response = await fetch(`${this.baseURL}/reset`, { method: 'POST' });
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      return await response.json();
-    } catch (error) {
-      console.error('Error resetting AI:', error);
-      return null;
-    }
-  }
-};
+// ==========================================
+// EVENT LISTENERS
+// ==========================================
 
-// ============================================================================
-// GAME FUNCTIONS
-// ============================================================================
-
-const GameFunctions = {
-  // Initialize game
-  init() {
-    GameState.reset();
-    UIManager.updateBoard();
-    UIManager.updateStatus();
-    UIManager.updateScoreboard();
-  },
-  
-  // Handle player move
-  playerMove(index) {
-    if (!GameState.gameActive || GameState.board[index] !== null) {
-      return;
-    }
-    
-    if (!GameState.makeMove(index)) {
-      return;
-    }
-    
-    UIManager.updateBoard();
-    
-    const result = GameState.getWinner();
-    if (result) {
-      this.endGame(GameState.currentPlayer, result.line);
-      return;
-    }
-    
-    if (GameState.isFull()) {
-      this.endGame('draw');
-      return;
-    }
-    
-    GameState.switchPlayer();
-    UIManager.updateStatus();
-    
-    // AI turn if in AI mode
-    if (GameState.gameMode === 'ai' && GameState.currentPlayer === 'O') {
-      setTimeout(() => this.aiMove(), 500);
-    }
-  },
-  
-  // Handle AI move
-  async aiMove() {
-    if (!GameState.gameActive || GameState.currentPlayer !== 'O') {
-      return;
-    }
-    
-    const aiMoveIndex = await APIClient.getAIMove(
-      GameState.board,
-      GameState.aiDifficulty
-    );
-    
-    if (aiMoveIndex === -1 || aiMoveIndex === null) {
-      this.endGame('draw');
-      return;
-    }
-    
-    if (!GameState.makeMove(aiMoveIndex)) {
-      this.aiMove();
-      return;
-    }
-    
-    UIManager.updateBoard();
-    
-    const result = GameState.getWinner();
-    if (result) {
-      this.endGame(GameState.currentPlayer, result.line);
-      return;
-    }
-    
-    if (GameState.isFull()) {
-      this.endGame('draw');
-      return;
-    }
-    
-    GameState.switchPlayer();
-    UIManager.updateStatus();
-  },
-  
-  // End game
-  endGame(winner, winningLine = null) {
-    GameState.gameActive = false;
-    
-    let message = '';
-    if (winner === 'draw') {
-      message = "It's a Draw!";
-      ScoreManager.addDraw();
-    } else if (winner === 'X') {
-      message = 'You Win! 🎉';
-      ScoreManager.addPlayerWin();
-    } else if (winner === 'O') {
-      message = 'AI Wins! 🤖';
-      ScoreManager.addAIWin();
-    }
-    
-    UIManager.updateStatus(message);
-    UIManager.updateScoreboard();
-    
-    if (winningLine) {
-      UIManager.highlightWinningLine(winningLine);
-    }
-    
-    // Train AI if player won
-    if (winner === 'X' && GameState.gameMode === 'ai') {
-      this.trainAIWithGameData();
-    }
-    
-    UIManager.showGameOverModal(message);
-  },
-  
-  // Train AI with game data
-  async trainAIWithGameData() {
-    const gameData = {
-      board: GameState.board,
-      moves: GameState.moves,
-      result: 'loss',
-      duration: Date.now() - GameState.gameStartTime,
-      difficulty: GameState.aiDifficulty
-    };
-    
-    const result = await APIClient.trainAI(gameData);
-    if (result) {
-      console.log('AI trained with game data:', result);
-    }
-  },
-  
-  // Set game mode
-  setGameMode(mode) {
-    GameState.gameMode = mode;
-    this.init();
-  },
-  
-  // Set AI difficulty
-  setAIDifficulty(difficulty) {
-    GameState.aiDifficulty = difficulty;
-  },
-  
-  // Undo last move
-  undoLastMove() {
-    if (GameState.moves.length < 1) return;
-    
-    const lastMove = GameState.moves.pop();
-    GameState.board[lastMove.index] = null;
-    GameState.currentPlayer = lastMove.player;
-    GameState.gameActive = true;
-    
-    UIManager.updateBoard();
-    UIManager.updateStatus();
-  },
-  
-  // Get game duration
-  getGameDuration() {
-    if (!GameState.gameStartTime) return 0;
-    return Math.floor((Date.now() - GameState.gameStartTime) / 1000);
-  }
-};
-
-// ============================================================================
-// UI MANAGER
-// ============================================================================
-
-const UIManager = {
-  // Update board display
-  updateBoard() {
+document.addEventListener('DOMContentLoaded', () => {
+    // Add click handlers to cells
     const cells = document.querySelectorAll('.cell');
     cells.forEach((cell, index) => {
-      const value = GameState.board[index];
-      cell.textContent = value || '';
-      cell.className = `cell ${value ? value.toLowerCase() : ''}`.trim();
-      cell.dataset.index = index;
+        cell.addEventListener('click', () => makePlayerMove(index));
     });
-  },
-  
-  // Update game status
-  updateStatus(message = null) {
-    const statusElement = document.getElementById('status');
-    if (!statusElement) return;
     
-    if (message) {
-      statusElement.textContent = message;
-    } else if (!GameState.gameActive) {
-      statusElement.textContent = 'Game Over!';
-    } else {
-      const player = GameState.currentPlayer === 'X' ? 'You' : 'AI';
-      statusElement.textContent = `${player}'s Turn`;
-    }
-  },
-  
-  // Update scoreboard
-  updateScoreboard() {
-    const scores = ScoreManager.getScores();
-    
-    const elements = {
-      totalGames: document.getElementById('total-games'),
-      playerWins: document.getElementById('player-wins'),
-      aiWins: document.getElementById('ai-wins'),
-      draws: document.getElementById('draws'),
-      winRate: document.getElementById('win-rate'),
-      streak: document.getElementById('streak'),
-      bestStreak: document.getElementById('best-streak')
-    };
-    
-    if (elements.totalGames) elements.totalGames.textContent = scores.totalGames;
-    if (elements.playerWins) elements.playerWins.textContent = scores.playerWins;
-    if (elements.aiWins) elements.aiWins.textContent = scores.aiWins;
-    if (elements.draws) elements.draws.textContent = scores.draws;
-    if (elements.winRate) elements.winRate.textContent = ScoreManager.getWinRate() + '%';
-    if (elements.streak) elements.streak.textContent = scores.streak;
-    if (elements.bestStreak) elements.bestStreak.textContent = scores.bestStreak;
-  },
-  
-  // Highlight winning line
-  highlightWinningLine(winningLine) {
-    const cells = document.querySelectorAll('.cell');
-    winningLine.forEach(index => {
-      cells[index].classList.add('winner');
-    });
-  },
-  
-  // Clear winning line highlight
-  clearWinningLine() {
-    const cells = document.querySelectorAll('.cell');
-    cells.forEach(cell => cell.classList.remove('winner'));
-  },
-  
-  // Show game over modal
-  showGameOverModal(message) {
-    const modal = document.getElementById('game-over-modal');
-    if (!modal) return;
-    
-    const modalMessage = modal.querySelector('.modal-message');
-    if (modalMessage) {
-      modalMessage.textContent = message;
-    }
-    
-    this.showModal('game-over-modal');
-  },
-  
-  // Show modal
-  showModal(modalId) {
-    const modal = document.getElementById(modalId);
-    if (!modal) return;
-    modal.style.display = 'flex';
-    modal.classList.add('active');
-  },
-  
-  // Close modal
-  closeModal(modalId) {
-    const modal = document.getElementById(modalId);
-    if (!modal) return;
-    modal.style.display = 'none';
-    modal.classList.remove('active');
-  },
-  
-  // Show notification
-  showNotification(message, type = 'info') {
-    const container = document.getElementById('notification-container');
-    if (!container) return;
-    
-    const notification = document.createElement('div');
-    notification.className = `notification ${type}`;
-    notification.textContent = message;
-    
-    container.appendChild(notification);
-    
-    setTimeout(() => {
-      notification.classList.add('fade-out');
-      setTimeout(() => notification.remove(), 300);
-    }, 3000);
-  },
-  
-  // Update difficulty display
-  updateDifficultyDisplay(difficulty) {
-    const buttons = document.querySelectorAll('[data-difficulty]');
-    buttons.forEach(btn => {
-      btn.classList.remove('active');
-      if (btn.dataset.difficulty === difficulty) {
-        btn.classList.add('active');
-      }
-    });
-  },
-  
-  // Update game mode display
-  updateGameModeDisplay(mode) {
-    const buttons = document.querySelectorAll('[data-mode]');
-    buttons.forEach(btn => {
-      btn.classList.remove('active');
-      if (btn.dataset.mode === mode) {
-        btn.classList.add('active');
-      }
-    });
-  },
-  
-  // Disable board
-  disableBoard() {
-    const cells = document.querySelectorAll('.cell');
-    cells.forEach(cell => cell.style.pointerEvents = 'none');
-  },
-  
-  // Enable board
-  enableBoard() {
-    const cells = document.querySelectorAll('.cell');
-    cells.forEach(cell => cell.style.pointerEvents = 'auto');
-  }
-};
-
-// ============================================================================
-// MODAL FUNCTIONS
-// ============================================================================
-
-const ModalManager = {
-  // Initialize modals
-  init() {
-    this.setupModalClosers();
-    this.setupModalBackdrops();
-  },
-  
-  // Setup modal close buttons
-  setupModalClosers() {
-    const closeButtons = document.querySelectorAll('.modal-close');
-    closeButtons.forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const modal = e.target.closest('.modal');
-        if (modal) {
-          UIManager.closeModal(modal.id);
-        }
-      });
-    });
-  },
-  
-  // Setup modal backdrops
-  setupModalBackdrops() {
-    const modals = document.querySelectorAll('.modal');
-    modals.forEach(modal => {
-      modal.addEventListener('click', (e) => {
+    // Close modal on click outside
+    const modal = document.getElementById('winner-modal');
+    modal.addEventListener('click', (e) => {
         if (e.target === modal) {
-          UIManager.closeModal(modal.id);
+            closeModal();
         }
-      });
     });
-  },
-  
-  // Open settings modal
-  openSettings() {
-    UIManager.showModal('settings-modal');
-  },
-  
-  // Open statistics modal
-  openStatistics() {
-    UIManager.showModal('statistics-modal');
-    this.updateStatisticsModal();
-  },
-  
-  // Update statistics modal
-  updateStatisticsModal() {
-    const scores = ScoreManager.getScores();
-    const statsElements = {
-      totalGames: document.getElementById('modal-total-games'),
-      playerWins: document.getElementById('modal-player-wins'),
-      aiWins: document.getElementById('modal-ai-wins'),
-      draws: document.getElementById('modal-draws'),
-      winRate: document.getElementById('modal-win-rate'),
-      currentStreak: document.getElementById('modal-current-streak'),
-      bestStreak: document.getElementById('modal-best-streak'),
-      lastGame: document.getElementById('modal-last-game')
-    };
     
-    if (statsElements.totalGames) statsElements.totalGames.textContent = scores.totalGames;
-    if (statsElements.playerWins) statsElements.playerWins.textContent = scores.playerWins;
-    if (statsElements.aiWins) statsElements.aiWins.textContent = scores.aiWins;
-    if (statsElements.draws) statsElements.draws.textContent = scores.draws;
-    if (statsElements.winRate) statsElements.winRate.textContent = ScoreManager.getWinRate() + '%';
-    if (statsElements.currentStreak) statsElements.currentStreak.textContent = scores.streak;
-    if (statsElements.bestStreak) statsElements.bestStreak.textContent = scores.bestStreak;
-    if (statsElements.lastGame) {
-      const lastDate = scores.lastGameDate ? new Date(scores.lastGameDate).toLocaleDateString() : 'Never';
-      statsElements.lastGame.textContent = lastDate;
+    // Load scores from localStorage
+    const savedScores = localStorage.getItem('tictactoe-scores');
+    if (savedScores) {
+        const scores = JSON.parse(savedScores);
+        gameState.playerWins = scores.playerWins || 0;
+        gameState.aiWins = scores.aiWins || 0;
+        gameState.draws = scores.draws || 0;
+        updateScore();
     }
-  },
-  
-  // Open help modal
-  openHelp() {
-    UIManager.showModal('help-modal');
-  },
-  
-  // Confirm reset scores
-  confirmResetScores() {
-    if (confirm('Are you sure you want to reset all scores? This cannot be undone.')) {
-      ScoreManager.resetScores();
-      UIManager.updateScoreboard();
-      UIManager.showNotification('Scores reset successfully', 'success');
-      this.updateStatisticsModal();
-    }
-  }
-};
+    
+    // Initial message
+    showMessage('Click "New Game" to start playing!');
+});
 
-// ============================================================================
-// EVENT LISTENERS
-// ============================================================================
+// Save scores to localStorage when they change
+function updateScore() {
+    document.getElementById('player-wins').textContent = gameState.playerWins;
+    document.getElementById('ai-wins').textContent = gameState.aiWins;
+    document.getElementById('draws').textContent = gameState.draws;
+    
+    localStorage.setItem('tictactoe-scores', JSON.stringify({
+        playerWins: gameState.playerWins,
+        aiWins: gameState.aiWins,
+        draws: gameState.draws
+    }));
+}
 
-const EventListeners = {
-  // Initialize all event listeners
-  init() {
-    this.setupBoardListeners();
-    this.setupButtonListeners();
-    this.setupGameModeListeners();
-    this.setupDifficultyListeners();
-    this.setupModalListeners();
-    this.setupKeyboardShortcuts();
-    ModalManager.init();
-  },
-  
-  // Board cell click listeners
-  setupBoardListeners() {
-    const board = document.getElementById('board');
-    if (!board) return;
-    
-    board.addEventListener('click', (e) => {
-      const cell = e.target.closest('.cell');
-      if (cell) {
-        const index = parseInt(cell.dataset.index);
-        GameFunctions.playerMove(index);
-      }
-    });
-  },
-  
-  // Main button listeners
-  setupButtonListeners() {
-    const newGameBtn = document.getElementById('new-game-btn');
-    if (newGameBtn) {
-      newGameBtn.addEventListener('click', () => {
-        UIManager.clearWinningLine();
-        GameFunctions.init();
-        UIManager.showNotification('New game started', 'info');
-      });
-    }
-    
-    const undoBtn = document.getElementById('undo-btn');
-    if (undoBtn) {
-      undoBtn.addEventListener('click', () => {
-        GameFunctions.undoLastMove();
-        UIManager.showNotification('Move undone', 'info');
-      });
-    }
-    
-    const settingsBtn = document.getElementById('settings-btn');
-    if (settingsBtn) {
-      settingsBtn.addEventListener('click', () => ModalManager.openSettings());
-    }
-    
-    const statsBtn = document.getElementById('stats-btn');
-    if (statsBtn) {
-      statsBtn.addEventListener('click', () => ModalManager.openStatistics());
-    }
-    
-    const helpBtn = document.getElementById('help-btn');
-    if (helpBtn) {
-      helpBtn.addEventListener('click', () => ModalManager.openHelp());
-    }
-    
-    const resetScoresBtn = document.getElementById('reset-scores-btn');
-    if (resetScoresBtn) {
-      resetScoresBtn.addEventListener('click', () => ModalManager.confirmResetScores());
-    }
-    
-    const playAgainBtn = document.getElementById('play-again-btn');
-    if (playAgainBtn) {
-      playAgainBtn.addEventListener('click', () => {
-        UIManager.closeModal('game-over-modal');
-        UIManager.clearWinningLine();
-        GameFunctions.init();
-      });
-    }
-  },
-  
-  // Game mode listeners
-  setupGameModeListeners() {
-    const modeButtons = document.querySelectorAll('[data-mode]');
-    modeButtons.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const mode = btn.dataset.mode;
-        GameState.gameMode = mode;
-        GameFunctions.init();
-        UIManager.updateGameModeDisplay(mode);
-        UIManager.showNotification(`Game mode: ${mode.toUpperCase()}`, 'info');
-      });
-    });
-  },
-  
-  // Difficulty listeners
-  setupDifficultyListeners() {
-    const difficultyButtons = document.querySelectorAll('[data-difficulty]');
-    difficultyButtons.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const difficulty = btn.dataset.difficulty;
-        GameFunctions.setAIDifficulty(difficulty);
-        UIManager.updateDifficultyDisplay(difficulty);
-        UIManager.showNotification(`Difficulty: ${difficulty}`, 'info');
-      });
-    });
-  },
-  
-  // Modal button listeners
-  setupModalListeners() {
-    const modalButtons = document.querySelectorAll('[data-modal]');
-    modalButtons.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const modalId = btn.dataset.modal;
-        UIManager.showModal(modalId);
-      });
-    });
-  }
-};
-
-// ============================================================================
+// ==========================================
 // KEYBOARD SHORTCUTS
-// ============================================================================
+// ==========================================
 
-const KeyboardShortcuts = {
-  // Initialize keyboard shortcuts
-  init() {
-    document.addEventListener('keydown', (e) => {
-      this.handleKeyPress(e);
+document.addEventListener('keydown', (e) => {
+    // Press 'N' for new game
+    if (e.key.toLowerCase() === 'n' && !gameState.gameOver) {
+        startNewGame(false);
+    }
+    
+    // Press numbers 1-9 to make moves
+    const num = parseInt(e.key);
+    if (num >= 1 && num <= 9) {
+        makePlayerMove(num - 1);
+    }
+    
+    // Press 'Escape' to close modal
+    if (e.key === 'Escape') {
+        const modal = document.getElementById('winner-modal');
+        if (modal.classList.contains('show')) {
+            closeModal();
+        }
+    }
+});
+
+// ==========================================
+// UTILITY FUNCTIONS
+// ==========================================
+
+// Add visual feedback for keyboard users
+document.addEventListener('DOMContentLoaded', () => {
+    const cells = document.querySelectorAll('.cell');
+    cells.forEach((cell) => {
+        cell.setAttribute('tabindex', '0');
+        
+        cell.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                cell.click();
+            }
+        });
     });
-  },
-  
-  // Handle key press
-  handleKeyPress(e) {
-    const key = e.key.toLowerCase();
-    
-    // Number keys (1-9) for board positions
-    if (key >= '1' && key <= '9') {
-      const index = parseInt(key) - 1;
-      if (index < 9 && GameState.gameActive) {
-        GameFunctions.playerMove(index);
-      }
-    }
-    
-    // Spacebar for new game
-    if (e.code === 'Space') {
-      e.preventDefault();
-      UIManager.clearWinningLine();
-      GameFunctions.init();
-      UIManager.showNotification('New game started', 'info');
-    }
-    
-    // Ctrl+Z for undo
-    if ((e.ctrlKey || e.metaKey) && key === 'z') {
-      e.preventDefault();
-      GameFunctions.undoLastMove();
-      UIManager.showNotification('Move undone', 'info');
-    }
-    
-    // 'S' for settings
-    if (key === 's' && !this.isInputFocused()) {
-      e.preventDefault();
-      ModalManager.openSettings();
-    }
-    
-    // 'T' for statistics
-    if (key === 't' && !this.isInputFocused()) {
-      e.preventDefault();
-      ModalManager.openStatistics();
-    }
-    
-    // 'H' for help
-    if (key === 'h' && !this.isInputFocused()) {
-      e.preventDefault();
-      ModalManager.openHelp();
-    }
-    
-    // Escape to close modals
-    if (key === 'escape') {
-      const modals = document.querySelectorAll('.modal.active');
-      modals.forEach(modal => UIManager.closeModal(modal.id));
-    }
-  },
-  
-  // Check if input is focused
-  isInputFocused() {
-    const activeElement = document.activeElement;
-    return activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA';
-  }
-};
-
-// ============================================================================
-// LOCAL STORAGE PERSISTENCE
-// ============================================================================
-
-const StorageManager = {
-  // Game settings key
-  settingsKey: 'ticTacToeSettings',
-  
-  // Get all settings
-  getSettings() {
-    const settings = localStorage.getItem(this.settingsKey);
-    return settings ? JSON.parse(settings) : this.getDefaultSettings();
-  },
-  
-  // Get default settings
-  getDefaultSettings() {
-    return {
-      gameMode: 'ai',
-      aiDifficulty: 'hard',
-      soundEnabled: true,
-      theme: 'light',
-      notifications: true
-    };
-  },
-  
-  // Save settings
-  saveSettings(settings) {
-    localStorage.setItem(this.settingsKey, JSON.stringify(settings));
-  },
-  
-  // Update specific setting
-  updateSetting(key, value) {
-    const settings = this.getSettings();
-    settings[key] = value;
-    this.saveSettings(settings);
-  },
-  
-  // Load settings on app start
-  loadSettings() {
-    const settings = this.getSettings();
-    GameState.gameMode = settings.gameMode;
-    GameState.aiDifficulty = settings.aiDifficulty;
-    return settings;
-  },
-  
-  // Clear all data
-  clearAllData() {
-    localStorage.removeItem(this.settingsKey);
-    ScoreManager.resetScores();
-  }
-};
-
-// ============================================================================
-// INITIALIZATION
-// ============================================================================
-
-const App = {
-  // Initialize the entire app
-  init() {
-    console.log('Initializing Tic-Tac-Toe Game...');
-    
-    // Load settings
-    const settings = StorageManager.loadSettings();
-    
-    // Initialize game
-    GameFunctions.init();
-    
-    // Setup event listeners
-    EventListeners.init();
-    
-    // Initialize keyboard shortcuts
-    KeyboardShortcuts.init();
-    
-    // Update display
-    UIManager.updateDifficultyDisplay(GameState.aiDifficulty);
-    UIManager.updateGameModeDisplay(GameState.gameMode);
-    UIManager.updateScoreboard();
-    
-    console.log('Game initialized successfully');
-  }
-};
-
-// Start app when DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => App.init());
-} else {
-  App.init();
-}
-
-// ============================================================================
-// EXPORT FOR TESTING (if using modules)
-// ============================================================================
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    GameState,
-    ScoreManager,
-    APIClient,
-    GameFunctions,
-    UIManager,
-    ModalManager,
-    EventListeners,
-    KeyboardShortcuts,
-    StorageManager,
-    App
-  };
-}
+});

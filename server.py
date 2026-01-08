@@ -1,228 +1,210 @@
+"""
+Flask server for Tic-Tac-Toe AI game.
+Provides API endpoints for web-based gameplay.
+"""
+
 from flask import Flask, jsonify, request, send_from_directory
+import torch
+import numpy as np
+from game_logic import TicTacToe, render_board
+from train import DQNAgent
 import os
-import json
-from datetime import datetime
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 
-# Store game state in memory (in production, use database)
-game_state = {
-    'board': [' ' for _ in range(9)],
-    'current_player': 'X',
-    'game_over': False,
-    'winner': None,
-    'move_count': 0
-}
+MODEL_PATH = 'dqn_model.pth'
 
+# Global game state
+game_env = TicTacToe()
+agent = DQNAgent(device='cpu')
 
-def check_winner(board):
-    """Check if there's a winner on the board."""
-    winning_combinations = [
-        [0, 1, 2], [3, 4, 5], [6, 7, 8],  # rows
-        [0, 3, 6], [1, 4, 7], [2, 5, 8],  # columns
-        [0, 4, 8], [2, 4, 6]               # diagonals
-    ]
-    
-    for combo in winning_combinations:
-        if board[combo[0]] == board[combo[1]] == board[combo[2]] != ' ':
-            return board[combo[0]]
-    
-    return None
-
-
-def is_board_full(board):
-    """Check if the board is full (draw)."""
-    return ' ' not in board
-
-
-def reset_game():
-    """Reset game state to initial conditions."""
-    global game_state
-    game_state = {
-        'board': [' ' for _ in range(9)],
-        'current_player': 'X',
-        'game_over': False,
-        'winner': None,
-        'move_count': 0
-    }
+# Load the trained model
+try:
+    agent.load(MODEL_PATH)
+    print(f'✓ Loaded model from {MODEL_PATH}')
+except Exception as e:
+    print(f'⚠ Could not load model: {e}')
+    print('Using untrained network (behavior may be poor)')
 
 
 @app.route('/')
 def index():
-    """Serve the main index.html file."""
+    """Serve the main HTML page."""
     return send_from_directory('static', 'index.html')
-
-
-@app.route('/<path:filename>')
-def serve_static(filename):
-    """Serve static files (CSS, JS, etc.)."""
-    return send_from_directory('static', filename)
 
 
 @app.route('/api/new_game', methods=['POST'])
 def new_game():
     """
-    Initialize a new game.
+    Start a new game.
+    
+    Request JSON:
+        {
+            "ai_starts": boolean (optional, default: false)
+        }
     
     Returns:
-        JSON with new game state
+        {
+            "board": list of 9 integers,
+            "game_over": boolean,
+            "winner": int or null,
+            "is_draw": boolean,
+            "message": string
+        }
     """
-    reset_game()
-    return jsonify({
-        'status': 'success',
-        'message': 'New game started',
-        'game_state': game_state,
-        'timestamp': datetime.utcnow().isoformat()
-    }), 200
+    global game_env
+    
+    data = request.get_json() or {}
+    ai_starts = data.get('ai_starts', False)
+    
+    game_env.reset()
+    
+    response = {
+        'board': game_env.board.flatten().tolist(),
+        'game_over': False,
+        'winner': None,
+        'is_draw': False,
+        'message': 'New game started!'
+    }
+    
+    # If AI starts, make the first move
+    if ai_starts:
+        state = game_env.get_state()
+        agent.eps = 0.0  # Greedy mode
+        action = agent.choose_action(state, game_env, player=1)
+        game_env.make_move(action, player=1)
+        
+        response['board'] = game_env.board.flatten().tolist()
+        response['message'] = f'AI moved to position {action + 1}'
+    
+    return jsonify(response)
 
 
 @app.route('/api/player_move', methods=['POST'])
 def player_move():
     """
-    Process a player move.
+    Process player's move and get AI response.
     
-    Expected JSON body:
+    Request JSON:
         {
-            'position': <int 0-8>,
-            'player': <str 'X' or 'O'>
+            "position": int (0-8)
         }
     
     Returns:
-        JSON with updated game state or error message
+        {
+            "board": list of 9 integers,
+            "game_over": boolean,
+            "winner": int or null (-1 for player, 1 for AI),
+            "is_draw": boolean,
+            "message": string,
+            "ai_position": int or null
+        }
     """
-    try:
-        data = request.get_json()
-        
-        # Validate input
-        if not data or 'position' not in data or 'player' not in data:
-            return jsonify({
-                'status': 'error',
-                'message': 'Missing required fields: position and player'
-            }), 400
-        
-        position = int(data['position'])
-        player = data['player'].upper()
-        
-        # Validate position
-        if position < 0 or position > 8:
-            return jsonify({
-                'status': 'error',
-                'message': 'Invalid position. Must be between 0 and 8.'
-            }), 400
-        
-        # Validate player
-        if player not in ['X', 'O']:
-            return jsonify({
-                'status': 'error',
-                'message': 'Invalid player. Must be X or O.'
-            }), 400
-        
-        # Check if game is already over
-        if game_state['game_over']:
-            return jsonify({
-                'status': 'error',
-                'message': 'Game is already over. Start a new game.'
-            }), 409
-        
-        # Check if position is already occupied
-        if game_state['board'][position] != ' ':
-            return jsonify({
-                'status': 'error',
-                'message': f'Position {position} is already occupied.'
-            }), 409
-        
-        # Check if it's the correct player's turn
-        if player != game_state['current_player']:
-            return jsonify({
-                'status': 'error',
-                'message': f'It is {game_state["current_player"]}\'s turn, not {player}\'s.'
-            }), 409
-        
-        # Make the move
-        game_state['board'][position] = player
-        game_state['move_count'] += 1
-        
-        # Check for winner
-        winner = check_winner(game_state['board'])
-        if winner:
-            game_state['winner'] = winner
-            game_state['game_over'] = True
-            return jsonify({
-                'status': 'success',
-                'message': f'Player {winner} wins!',
-                'game_state': game_state,
-                'timestamp': datetime.utcnow().isoformat()
-            }), 200
-        
-        # Check for draw
-        if is_board_full(game_state['board']):
-            game_state['game_over'] = True
-            return jsonify({
-                'status': 'success',
-                'message': 'Game is a draw!',
-                'game_state': game_state,
-                'timestamp': datetime.utcnow().isoformat()
-            }), 200
-        
-        # Switch player
-        game_state['current_player'] = 'O' if player == 'X' else 'X'
-        
-        return jsonify({
-            'status': 'success',
-            'message': f'Move accepted. Next player: {game_state["current_player"]}',
-            'game_state': game_state,
-            'timestamp': datetime.utcnow().isoformat()
-        }), 200
+    global game_env
     
-    except ValueError:
+    data = request.get_json()
+    if not data or 'position' not in data:
+        return jsonify({'error': 'Missing position parameter'}), 400
+    
+    position = data['position']
+    
+    # Validate position
+    if not isinstance(position, int) or position < 0 or position > 8:
+        return jsonify({'error': 'Invalid position. Must be 0-8'}), 400
+    
+    # Check if position is available
+    if position not in game_env.available_actions():
+        return jsonify({'error': 'Position already taken'}), 400
+    
+    # Player move (player = -1)
+    game_env.make_move(position, player=-1)
+    
+    # Check if player won or draw
+    if game_env.current_winner == -1:
         return jsonify({
-            'status': 'error',
-            'message': 'Invalid position value. Must be an integer.'
-        }), 400
-    except Exception as e:
+            'board': game_env.board.flatten().tolist(),
+            'game_over': True,
+            'winner': -1,
+            'is_draw': False,
+            'message': 'You won! 🎉',
+            'ai_position': None
+        })
+    
+    if game_env.is_draw():
         return jsonify({
-            'status': 'error',
-            'message': f'An error occurred: {str(e)}'
-        }), 500
+            'board': game_env.board.flatten().tolist(),
+            'game_over': True,
+            'winner': None,
+            'is_draw': True,
+            'message': "It's a draw!",
+            'ai_position': None
+        })
+    
+    # AI move (player = 1)
+    state = game_env.get_state()
+    agent.eps = 0.0  # Greedy mode
+    ai_action = agent.choose_action(state, game_env, player=1)
+    game_env.make_move(ai_action, player=1)
+    
+    # Check if AI won or draw
+    message = f'AI moved to position {ai_action + 1}'
+    game_over = False
+    winner = None
+    is_draw = False
+    
+    if game_env.current_winner == 1:
+        message = 'AI won! Try again!'
+        game_over = True
+        winner = 1
+    elif game_env.is_draw():
+        message = "It's a draw!"
+        game_over = True
+        is_draw = True
+    
+    return jsonify({
+        'board': game_env.board.flatten().tolist(),
+        'game_over': game_over,
+        'winner': winner,
+        'is_draw': is_draw,
+        'message': message,
+        'ai_position': ai_action
+    })
 
 
 @app.route('/api/game_state', methods=['GET'])
-def get_game_state():
+def game_state():
     """
-    Retrieve the current game state.
+    Get current game state.
     
     Returns:
-        JSON with current game state
+        {
+            "board": list of 9 integers,
+            "game_over": boolean,
+            "winner": int or null,
+            "is_draw": boolean,
+            "available_actions": list of int
+        }
     """
+    global game_env
+    
     return jsonify({
-        'status': 'success',
-        'game_state': game_state,
-        'timestamp': datetime.utcnow().isoformat()
-    }), 200
-
-
-@app.errorhandler(404)
-def not_found(error):
-    """Handle 404 errors."""
-    return jsonify({
-        'status': 'error',
-        'message': 'Endpoint not found'
-    }), 404
-
-
-@app.errorhandler(405)
-def method_not_allowed(error):
-    """Handle 405 errors (method not allowed)."""
-    return jsonify({
-        'status': 'error',
-        'message': 'Method not allowed'
-    }), 405
+        'board': game_env.board.flatten().tolist(),
+        'game_over': game_env.current_winner is not None or game_env.is_draw(),
+        'winner': game_env.current_winner,
+        'is_draw': game_env.is_draw(),
+        'available_actions': game_env.available_actions()
+    })
 
 
 if __name__ == '__main__':
     # Create static directory if it doesn't exist
-    if not os.path.exists('static'):
-        os.makedirs('static')
+    os.makedirs('static', exist_ok=True)
     
-    # Run the Flask app
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    print('='*50)
+    print('🎮 Tic-Tac-Toe AI Server Starting...')
+    print('='*50)
+    print('Open your browser and navigate to:')
+    print('  👉 http://localhost:8000')
+    print('='*50)
+    
+    app.run(host='0.0.0.0', port=8000, debug=True)

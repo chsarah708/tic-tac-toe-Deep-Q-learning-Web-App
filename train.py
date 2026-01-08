@@ -1,331 +1,315 @@
+
+# --- file: train.py ---
+"""
+Training script for the DQN agent.
+
+This module implements the Deep Q-Network (DQN) agent for Tic-Tac-Toe,
+including the neural network architecture, experience replay memory,
+and the training loop for self-play reinforcement learning.
+"""
+
+import random
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from collections import deque
-import random
-from itertools import count
+from game_logic import TicTacToe, smart_logic
+
+MODEL_PATH = 'dqn_model.pth'
 
 
-class DQNNetwork(nn.Module):
+class DQN(nn.Module):
     """
     Deep Q-Network for Tic-Tac-Toe.
-    Takes game state (9 positions) as input and outputs Q-values for 9 possible actions.
+
+    A simple feedforward neural network that approximates the Q-function.
+    Takes board state as input and outputs Q-values for each action.
     """
-    def __init__(self, input_size=9, hidden_size=128, output_size=9):
-        super(DQNNetwork, self).__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.relu1 = nn.ReLU()
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.relu2 = nn.ReLU()
-        self.fc3 = nn.Linear(hidden_size, output_size)
-        
+
+    def __init__(self):
+        """
+        Initialize the DQN network.
+
+        Architecture: Linear(9, 64) -> ReLU -> Linear(64, 64) -> ReLU -> Linear(64, 9)
+        """
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(9, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, 9)
+        )
+
     def forward(self, x):
-        """Forward pass through the network."""
-        x = self.relu1(self.fc1(x))
-        x = self.relu2(self.fc2(x))
-        x = self.fc3(x)
-        return x
+        """
+        Forward pass through the network.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor of shape (batch_size, 9)
+
+        Returns
+        -------
+        torch.Tensor
+            Q-values for each of the 9 actions, shape (batch_size, 9)
+        """
+        return self.net(x)
 
 
 class ReplayMemory:
     """
-    Experience Replay Memory for storing and sampling transitions.
-    Stores (state, action, reward, next_state, done) tuples.
+    Experience replay memory buffer.
+
+    Stores past experiences for training stability and decorrelation.
     """
-    def __init__(self, capacity=10000):
+
+    def __init__(self, capacity=100000):
+        """
+        Initialize the replay memory.
+
+        Parameters
+        ----------
+        capacity : int, optional
+            Maximum number of experiences to store. Default is 50000.
+        """
         self.memory = deque(maxlen=capacity)
-        
-    def push(self, state, action, reward, next_state, done):
-        """Store a transition in memory."""
-        self.memory.append((state, action, reward, next_state, done))
-        
-    def sample(self, batch_size):
-        """Sample a random batch of transitions."""
-        batch = random.sample(self.memory, min(batch_size, len(self.memory)))
-        states, actions, rewards, next_states, dones = zip(*batch)
-        
-        # Convert to tensors
-        states = torch.tensor(np.array(states), dtype=torch.float32)
-        actions = torch.tensor(np.array(actions), dtype=torch.long)
-        rewards = torch.tensor(np.array(rewards), dtype=torch.float32)
-        next_states = torch.tensor(np.array(next_states), dtype=torch.float32)
-        dones = torch.tensor(np.array(dones), dtype=torch.float32)
-        
-        return states, actions, rewards, next_states, dones
-    
+
+    def push(self, transition):
+        """
+        Add a transition to the memory.
+
+        Parameters
+        ----------
+        transition : tuple
+            Experience tuple (state, action, reward, next_state, done)
+        """
+        self.memory.append(transition)
+
+    def sample(self, n):
+        """
+        Sample a batch of experiences.
+
+        Parameters
+        ----------
+        n : int
+            Number of experiences to sample.
+
+        Returns
+        -------
+        list
+            List of n randomly sampled transitions.
+        """
+        return random.sample(self.memory, n)
+
     def __len__(self):
+        """
+        Get the current number of stored experiences.
+
+        Returns
+        -------
+        int
+            Number of experiences in memory.
+        """
         return len(self.memory)
 
 
 class DQNAgent:
     """
-    DQN Agent for playing Tic-Tac-Toe.
-    Implements epsilon-greedy exploration and experience replay.
+    Deep Q-Learning agent for Tic-Tac-Toe.
+
+    Implements epsilon-greedy action selection, experience replay,
+    and Q-learning updates.
     """
-    def __init__(self, state_size=9, action_size=9, learning_rate=0.001, 
-                 gamma=0.99, epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.995,
-                 device=None):
+
+    def __init__(self, lr=1e-3, gamma=0.99, eps=1.0, eps_min=0.1, eps_decay=0.9995, device=None):
         """
-        Initialize the DQN Agent.
-        
-        Args:
-            state_size: Size of the state space (9 for Tic-Tac-Toe)
-            action_size: Size of the action space (9 for Tic-Tac-Toe)
-            learning_rate: Learning rate for the optimizer
-            gamma: Discount factor for future rewards
-            epsilon: Initial exploration rate
-            epsilon_min: Minimum exploration rate
-            epsilon_decay: Decay rate for epsilon
-            device: Device to run on (CPU or GPU)
+        Initialize the DQN agent.
+
+        Parameters
+        ----------
+        lr : float, optional
+            Learning rate for optimizer. Default is 1e-3.
+        gamma : float, optional
+            Discount factor for future rewards. Default is 0.99.
+        eps : float, optional
+            Initial epsilon for exploration. Default is 1.0.
+        eps_min : float, optional
+            Minimum epsilon value. Default is 0.1.
+        eps_decay : float, optional
+            Epsilon decay factor per episode. Default is 0.9995.
+        device : str, optional
+            Device for PyTorch tensors ('cpu', 'cuda', or None for auto-detect). Default is None.
         """
-        self.device = device if device else torch.device("cpu")
-        
-        # Network parameters
-        self.state_size = state_size
-        self.action_size = action_size
+        if device is None:
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = device
+        self.model = DQN().to(self.device)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.gamma = gamma
-        
-        # Exploration parameters
-        self.epsilon = epsilon
-        self.epsilon_min = epsilon_min
-        self.epsilon_decay = epsilon_decay
-        
-        # Networks
-        self.policy_net = DQNNetwork(input_size=state_size, output_size=action_size).to(self.device)
-        self.target_net = DQNNetwork(input_size=state_size, output_size=action_size).to(self.device)
-        self.target_net.load_state_dict(self.policy_net.state_dict())
-        self.target_net.eval()
-        
-        # Optimizer
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=learning_rate)
-        self.loss_fn = nn.MSELoss()
-        
-        # Experience replay memory
-        self.memory = ReplayMemory(capacity=10000)
-        
-    def select_action(self, state, valid_actions=None, training=True):
+        self.eps = eps
+        self.eps_min = eps_min
+        self.eps_decay = eps_decay
+        self.memory = ReplayMemory()
+
+    def choose_action(self, state, env, player):
         """
-        Select an action using epsilon-greedy strategy.
-        
-        Args:
-            state: Current game state
-            valid_actions: List of valid action indices
-            training: Whether in training mode (affects epsilon usage)
-            
-        Returns:
-            Selected action index
+        Select an action using epsilon-greedy policy with smart logic.
+
+        First tries rule-based smart moves, then epsilon-greedy with DQN.
+
+        Parameters
+        ----------
+        state : np.ndarray
+            Current board state (9 floats).
+        env : TicTacToe
+            Game environment.
+        player : int
+            Current player (1 or -1).
+
+        Returns
+        -------
+        int
+            Selected action index (0-8).
         """
-        if training and np.random.random() < self.epsilon:
-            # Exploration: random valid action
-            if valid_actions is not None:
-                return random.choice(valid_actions)
-            else:
-                return random.randint(0, self.action_size - 1)
-        else:
-            # Exploitation: best action according to policy
-            with torch.no_grad():
-                state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
-                q_values = self.policy_net(state_tensor)
-                
-                if valid_actions is not None:
-                    # Mask invalid actions with very low Q-values
-                    q_values_masked = q_values.clone()
-                    for i in range(self.action_size):
-                        if i not in valid_actions:
-                            q_values_masked[0, i] = float('-inf')
-                    action = q_values_masked.argmax(dim=1).item()
-                else:
-                    action = q_values.argmax(dim=1).item()
-                    
-            return action
-    
-    def remember(self, state, action, reward, next_state, done):
-        """Store transition in replay memory."""
-        self.memory.push(state, action, reward, next_state, done)
-    
-    def replay(self, batch_size):
+        # Rule-based smart move
+        smart = smart_logic(env, player)
+        if smart is not None:
+            return smart
+
+        # Epsilon-greedy
+        if random.random() < self.eps:
+            return random.choice(env.available_actions())
+
+        s = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            q = self.model(s).cpu().numpy().flatten()
+        masked = np.full(9, -np.inf)
+        for a in env.available_actions():
+            masked[a] = q[a]
+        return int(np.argmax(masked))
+
+    def push_memory(self, transition):
         """
-        Learn from a batch of experiences.
-        
-        Args:
-            batch_size: Size of the mini-batch to sample
-            
-        Returns:
-            Loss value
+        Store an experience in replay memory.
+
+        Parameters
+        ----------
+        transition : tuple
+            Experience tuple (state, action, reward, next_state, done)
+        """
+        self.memory.push(transition)
+
+    def train_step(self, batch_size=64):
+        """
+        Perform one training step on a batch of experiences.
+
+        Parameters
+        ----------
+        batch_size : int, optional
+            Number of experiences to sample. Default is 64.
+
+        Returns
+        -------
+        float or None
+            Loss value if training occurred, None if insufficient samples.
         """
         if len(self.memory) < batch_size:
             return None
-        
-        states, actions, rewards, next_states, dones = self.memory.sample(batch_size)
-        
-        # Move tensors to device
-        states = states.to(self.device)
-        actions = actions.to(self.device)
-        rewards = rewards.to(self.device)
-        next_states = next_states.to(self.device)
-        dones = dones.to(self.device)
-        
-        # Compute Q-values for current states
-        q_values = self.policy_net(states)
-        q_values = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
-        
-        # Compute target Q-values
-        with torch.no_grad():
-            next_q_values = self.target_net(next_states).max(dim=1)[0]
-            target_q_values = rewards + (1 - dones) * self.gamma * next_q_values
-        
-        # Compute loss
-        loss = self.loss_fn(q_values, target_q_values)
-        
-        # Backpropagation
+        batch = self.memory.sample(batch_size)
+        states, actions, rewards, next_states, dones = zip(*batch)
+        states = torch.tensor(np.stack(states), dtype=torch.float32).to(self.device)
+        actions = torch.tensor(actions, dtype=torch.long).to(self.device)
+        rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
+        next_states = torch.tensor(np.stack(next_states), dtype=torch.float32).to(self.device)
+        dones = torch.tensor(dones, dtype=torch.float32).to(self.device)
+
+        q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze()
+        next_q = self.model(next_states).max(1)[0]
+        targets = rewards + (1 - dones) * self.gamma * next_q
+
+        loss = nn.MSELoss()(q_values, targets.detach())
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
         self.optimizer.step()
-        
         return loss.item()
-    
-    def update_target_network(self):
-        """Update target network with weights from policy network."""
-        self.target_net.load_state_dict(self.policy_net.state_dict())
-    
-    def decay_epsilon(self):
-        """Decay exploration rate."""
-        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
-    
-    def save(self, filepath):
-        """Save model checkpoint."""
-        torch.save({
-            'policy_net': self.policy_net.state_dict(),
-            'target_net': self.target_net.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
-            'epsilon': self.epsilon
-        }, filepath)
-        print(f"Model saved to {filepath}")
-    
-    def load(self, filepath):
-        """Load model checkpoint."""
-        checkpoint = torch.load(filepath, map_location=self.device)
-        self.policy_net.load_state_dict(checkpoint['policy_net'])
-        self.target_net.load_state_dict(checkpoint['target_net'])
-        self.optimizer.load_state_dict(checkpoint['optimizer'])
-        self.epsilon = checkpoint['epsilon']
-        print(f"Model loaded from {filepath}")
+
+    def save(self, path=MODEL_PATH):
+        """
+        Save the model state dictionary to file.
+
+        Parameters
+        ----------
+        path : str, optional
+            File path to save the model. Default is MODEL_PATH.
+        """
+        torch.save(self.model.state_dict(), path)
+
+    def load(self, path=MODEL_PATH):
+        """
+        Load the model state dictionary from file.
+
+        Parameters
+        ----------
+        path : str, optional
+            File path to load the model from. Default is MODEL_PATH.
+        """
+        self.model.load_state_dict(torch.load(path, map_location=self.device))
 
 
-def train_agent(env, agent, num_episodes=1000, batch_size=32, target_update_freq=100,
-                save_freq=100, save_path='dqn_model.pth'):
+def train(episodes=100000, batch_size=64):
     """
-    Train the DQN agent on Tic-Tac-Toe environment.
-    
-    Args:
-        env: Game environment with reset() and step(action) methods
-        agent: DQNAgent instance
-        num_episodes: Number of training episodes
-        batch_size: Size of mini-batches for learning
-        target_update_freq: Frequency of updating target network
-        save_freq: Frequency of saving model checkpoints
-        save_path: Path to save model checkpoints
-        
-    Returns:
-        Dictionary with training statistics
+    Train the DQN agent through self-play.
+
+    The agent plays against itself, collecting experiences and updating
+    the network. Uses epsilon decay for exploration-exploitation balance.
+
+    Parameters
+    ----------
+    episodes : int, optional
+        Number of training episodes. Default is 20000.
+    batch_size : int, optional
+        Batch size for training updates. Default is 64.
     """
-    episode_rewards = []
-    episode_losses = []
-    win_rates = []
-    
-    print("Starting DQN training...")
-    print(f"Total Episodes: {num_episodes}")
-    print(f"Batch Size: {batch_size}")
-    print(f"Target Update Frequency: {target_update_freq}")
-    print("-" * 50)
-    
-    for episode in range(num_episodes):
-        # Reset environment
+    env = TicTacToe()
+    agent = DQNAgent()
+
+    for ep in range(1, episodes + 1):
         state = env.reset()
-        total_reward = 0
-        total_loss = 0
-        loss_count = 0
         done = False
-        
-        # Episode loop
+        player = 1  # AI starts
         while not done:
-            # Get valid actions
-            valid_actions = env.get_valid_actions()
-            
-            # Select and perform action
-            action = agent.select_action(state, valid_actions=valid_actions, training=True)
-            next_state, reward, done, info = env.step(action)
-            
-            # Store transition in memory
-            agent.remember(state, action, reward, next_state, done)
-            
-            # Learn from experience
-            loss = agent.replay(batch_size)
-            if loss is not None:
-                total_loss += loss
-                loss_count += 1
-            
-            total_reward += reward
+            action = agent.choose_action(state, env, player)
+            env.make_move(action, player)
+
+            reward = 0.0
+            if env.current_winner == player:
+                reward = 1.0
+                done = True
+            elif env.is_draw():
+                reward = 0.3
+                done = True
+
+            next_state = env.get_state()
+            agent.push_memory((state, action, reward, next_state, done))
+
+            # Train on batch
+            agent.train_step(batch_size)
+
             state = next_state
-        
-        # Update statistics
-        episode_rewards.append(total_reward)
-        if loss_count > 0:
-            avg_loss = total_loss / loss_count
-            episode_losses.append(avg_loss)
-        
-        # Decay exploration rate
-        agent.decay_epsilon()
-        
-        # Update target network
-        if (episode + 1) % target_update_freq == 0:
-            agent.update_target_network()
-        
-        # Calculate win rate (last 100 episodes)
-        if (episode + 1) % 100 == 0:
-            recent_rewards = episode_rewards[-100:]
-            win_rate = sum(1 for r in recent_rewards if r > 0) / len(recent_rewards)
-            win_rates.append(win_rate)
-            
-            avg_reward = np.mean(recent_rewards)
-            avg_loss = np.mean(episode_losses[-100:]) if len(episode_losses) >= 100 else np.mean(episode_losses)
-            
-            print(f"Episode {episode + 1}/{num_episodes}")
-            print(f"  Avg Reward (100): {avg_reward:.2f}")
-            print(f"  Win Rate (100): {win_rate:.2%}")
-            print(f"  Avg Loss: {avg_loss:.4f}")
-            print(f"  Epsilon: {agent.epsilon:.4f}")
-            print("-" * 50)
-        
-        # Save model checkpoint
-        if (episode + 1) % save_freq == 0:
-            agent.save(f"{save_path[:-4]}_ep{episode + 1}.pth")
-    
-    # Final model save
-    agent.save(save_path)
-    
-    # Print final statistics
-    print("\nTraining Complete!")
-    print(f"Final Epsilon: {agent.epsilon:.4f}")
-    print(f"Average Reward (last 100 episodes): {np.mean(episode_rewards[-100:]):.2f}")
-    if win_rates:
-        print(f"Final Win Rate: {win_rates[-1]:.2%}")
-    
-    return {
-        'episode_rewards': episode_rewards,
-        'episode_losses': episode_losses,
-        'win_rates': win_rates
-    }
+            player *= -1
+
+        # Decay epsilon
+        agent.eps = max(agent.eps_min, agent.eps * agent.eps_decay)
+
+        if ep % 500 == 0:
+            print(f"Episode {ep}\tMemory:{len(agent.memory)}\tEps:{agent.eps:.4f}")
+
+    agent.save()
+    print(f"Training finished. Model saved to {MODEL_PATH}")
 
 
-if __name__ == "__main__":
-    print("DQN Training Module for Tic-Tac-Toe")
-    print("=" * 50)
-    print("This module provides:")
-    print("  - DQNNetwork: Neural network for Q-value estimation")
-    print("  - ReplayMemory: Experience replay buffer")
-    print("  - DQNAgent: Agent with epsilon-greedy exploration")
-    print("  - train_agent: Main training function")
-    print("=" * 50)
+if __name__ == '__main__':
+    train()
